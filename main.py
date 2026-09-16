@@ -7,16 +7,13 @@ import threading
 from datetime import datetime, timezone
 from html import escape
 from pyrogram import Client, idle
-from dotenv import load_dotenv # <-- ВОЗВРАЩАЕМ ЭТУ БИБЛИОТЕКУ
 
-# Читаем тот самый файл, который генерирует BotHost из твоей панели
-load_dotenv()
-
-# === ЧТЕНИЕ ПЕРЕМЕННЫХ ИЗ BOTHOST ===
-API_ID_RAW = os.getenv("API_ID", "").strip()
-API_HASH = os.getenv("API_HASH", "").strip()
-SESSION_STRING = os.getenv("SESSION_STRING", "").strip()
-BOT_FEDERAL = os.getenv("BOT_FEDERAL", "").strip()
+# === ЖЕЛЕЗОБЕТОННОЕ ЧТЕНИЕ ПЕРЕМЕННЫХ ИЗ BOTHOST ===
+# Никаких load_dotenv, берем строго из системы хостинга!
+API_ID_RAW = os.environ.get("API_ID", "").strip()
+API_HASH = os.environ.get("API_HASH", "").strip()
+SESSION_STRING = os.environ.get("SESSION_STRING", "").strip()
+BOT_FEDERAL = os.environ.get("BOT_FEDERAL", "").strip()
 
 missing = []
 if not API_ID_RAW: missing.append("API_ID")
@@ -25,7 +22,7 @@ if not SESSION_STRING: missing.append("SESSION_STRING")
 if not BOT_FEDERAL: missing.append("BOT_FEDERAL")
 
 if missing:
-    raise RuntimeError(f"[-] ОШИБКА: Питону не удалось прочитать переменные из BotHost: {', '.join(missing)}")
+    raise RuntimeError(f"[-] ОШИБКА: BotHost не передал Питону переменные: {', '.join(missing)}")
 
 try:
     API_ID = int(API_ID_RAW)
@@ -36,7 +33,7 @@ except ValueError:
 TARGET_CHANNEL = "@Dozor_Ru_RF"
 SOURCE_CHANNELS = ["vrv_radar"] 
 
-# ... и дальше идет весь остальной код без изменений (FOOTER_SIGNATURE, STOP_WORDS и т.д.)
+# ... дальше идет остальной код (FOOTER_SIGNATURE, STOP_WORDS и функции) ...
 
 FOOTER_SIGNATURE = (
     "\n\n📡 <b>Дозор.ру | Радар по всей России</b> — "
