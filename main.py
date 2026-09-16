@@ -8,26 +8,9 @@ from datetime import datetime, timezone
 from html import escape
 from pyrogram import Client, idle
 
-# ВЕРНУЛИ НА МЕСТО! BotHost берет переменные из панели и пишет их именно в .env
+# 🔥 ФИКС: Включаем чтение скрытого .env файла, который генерирует BotHost из своей панели!
 from dotenv import load_dotenv
 load_dotenv()
-
-# === ПРОФЕССИОНАЛЬНОЕ ЛОГИРОВАНИЕ И СТАТИСТИКА ===
-STATS = {"processed": 0, "sent": 0, "filtered": 0, "errors": 0}
-stats_lock = threading.Lock()
-
-def log_msg(level, tag, msg):
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    line = f"{timestamp} [{level}] [{tag}] {msg}"
-    print(line)
-
-    if level == "ERROR" or level == "FILTR":
-        with stats_lock:
-            if level == "ERROR": STATS["errors"] += 1
-            if level == "FILTR": STATS["filtered"] += 1
-    
-    if level == "ERROR":
-        _notify_admin_async(line)
 
 # === ЖЕЛЕЗОБЕТОННОЕ ЧТЕНИЕ ПЕРЕМЕННЫХ ИЗ BOTHOST ===
 API_ID_RAW = os.environ.get("API_ID", "").strip()
@@ -42,7 +25,7 @@ if not SESSION_STRING: missing.append("SESSION_STRING")
 if not BOT_FEDERAL: missing.append("BOT_FEDERAL")
 
 if missing:
-    raise RuntimeError(f"[-] ОШИБКА: BotHost не передал Питону переменные: {', '.join(missing)}. Удали пустой .env из GitHub!")
+    raise RuntimeError(f"[-] ОШИБКА: BotHost не передал Питону переменные: {', '.join(missing)}")
 
 try:
     API_ID = int(API_ID_RAW)
@@ -51,7 +34,7 @@ except ValueError:
 
 # === НАСТРОЙКИ КАНАЛОВ И ФИЛЬТРОВ ===
 TARGET_CHANNEL = "@Dozor_Ru_RF"
-SOURCE_CHANNELS = ["vrv_radar"] # Источник
+SOURCE_CHANNELS = ["vrv_radar"] # Канал источник без @
 
 FOOTER_SIGNATURE = (
     "\n\n📡 <b>Дозор.ру | Радар по всей России</b> — "
@@ -68,12 +51,29 @@ STOP_WORDS = [
     "квадрокоптер", "mavic", "сбп", "перевод", "карту", "пожертвован"
 ]
 
-# === МОНИТОРИНГ И ЛОГИРОВАНИЕ АДМИНУ ===
+# === НАСЛЕДИЕ V16: МОНИТОРИНГ И ЛОГИРОВАНИЕ ===
+STATS = {"processed": 0, "sent": 0, "filtered": 0, "errors": 0}
+stats_lock = threading.Lock()
+
+# Админ-айди прочитается, только если ты добавишь его в панель. Если нет — бот просто не будет слать логи в ЛС.
 ADMIN_CHAT_ID = os.environ.get("ADMIN_CHAT_ID")
-ADMIN_BOT_TOKEN = BOT_FEDERAL # Используем того же бота для уведомлений
+ADMIN_BOT_TOKEN = os.environ.get("ADMIN_BOT_TOKEN", BOT_FEDERAL)
 
 MAIN_LOOP = None      
 ADMIN_QUEUE = None    
+
+def log_msg(level, tag, msg):
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    line = f"{timestamp} [{level}] [{tag}] {msg}"
+    print(line)
+
+    if level == "ERROR" or level == "FILTR":
+        with stats_lock:
+            if level == "ERROR": STATS["errors"] += 1
+            if level == "FILTR": STATS["filtered"] += 1
+    
+    if level == "ERROR":
+        _notify_admin_async(line)
 
 def _notify_admin_async(line):
     if not ADMIN_CHAT_ID or MAIN_LOOP is None: return
@@ -124,7 +124,7 @@ async def admin_notifier_worker():
 async def heartbeat_worker():
     if not ADMIN_CHAT_ID: return
     while True:
-        await asyncio.sleep(6 * 3600) # Раз в 6 часов
+        await asyncio.sleep(6 * 3600) # Сердечный ритм раз в 6 часов
         try:
             with stats_lock:
                 proc, sent, filt, errs = STATS['processed'], STATS['sent'], STATS['filtered'], STATS['errors']
@@ -154,7 +154,7 @@ def is_filtered_out(text: str) -> bool:
             log_msg("FILTR", "MODERATION", f"Блок по стоп-слову: '{kw}'")
             return True
             
-    # Проверка на сторонние ссылки (блокируем всё, кроме разрешенных)
+    # Проверка на сторонние ссылки (блокируем всё, кроме разрешенных каналов)
     urls = re.findall(r'https?://[^\s]+|t\.me/[^\s]+', text)
     for url in urls:
         if "vrv_radar" not in url and "vrv_support" not in url and "max.ru" not in url:
@@ -164,10 +164,9 @@ def is_filtered_out(text: str) -> bool:
     return False
 
 def sync_send_via_bot_api(chat_id, html_text, photo_id=None, video_id=None):
-    """Отправка сообщения с железобетонными ретраями"""
+    """Отправка сообщения с железобетонными ретраями из V16"""
     base_url = f"https://api.telegram.org/bot{BOT_FEDERAL}"
     
-    # Собираем финальный текст (оригинал + наша подпись)
     full_text = html_text + FOOTER_SIGNATURE if html_text else FOOTER_SIGNATURE
     
     payload = {
@@ -179,14 +178,14 @@ def sync_send_via_bot_api(chat_id, html_text, photo_id=None, video_id=None):
     if photo_id:
         url = f"{base_url}/sendPhoto"
         payload["photo"] = photo_id
-        payload["caption"] = full_text[:1024] # Лимит Телеграма для подписей к медиа
+        payload["caption"] = full_text[:1024] # Защита от лимитов Telegram (подпись к фото)
     elif video_id:
         url = f"{base_url}/sendVideo"
         payload["video"] = video_id
         payload["caption"] = full_text[:1024]
     else:
         url = f"{base_url}/sendMessage"
-        payload["text"] = full_text[:4096] # Лимит Телеграма для текста
+        payload["text"] = full_text[:4096] # Защита от лимитов Telegram (чистый текст)
         
     for attempt in range(3):
         try:
@@ -222,7 +221,6 @@ async def aggregator_handler(client, message):
     if username not in SOURCE_CHANNELS:
         return
 
-    # Берем чистый текст для проверки фильтрами
     raw_text = message.text or message.caption or ""
     
     with stats_lock:
@@ -257,7 +255,7 @@ async def main():
     ADMIN_QUEUE = asyncio.Queue(maxsize=200)
 
     log_msg("INFO", "SYSTEM", "=======================================")
-    log_msg("INFO", "SYSTEM", "ФЕДЕРАЛЬНЫЙ АГРЕГАТОР ЗАПУЩЕН (V16 Core)")
+    log_msg("INFO", "SYSTEM", "ФЕДЕРАЛЬНЫЙ АГРЕГАТОР ЗАПУЩЕН (V16 Core Edition)")
     log_msg("INFO", "SYSTEM", "=======================================")
 
     await app.start()
@@ -273,7 +271,7 @@ async def main():
         async for _ in app.get_dialogs(limit=20): pass 
         
         if ADMIN_CHAT_ID:
-            await MAIN_LOOP.run_in_executor(None, sync_send_admin_message, "✅ <b>Федеральный Агрегатор запущен!</b>")
+            await MAIN_LOOP.run_in_executor(None, sync_send_admin_message, "✅ <b>Федеральный Агрегатор успешно запущен!</b>")
 
         await idle()
     finally:
