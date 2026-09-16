@@ -3,24 +3,32 @@ import asyncio
 import re
 import requests
 from pyrogram import Client, idle
-from dotenv import load_dotenv
 
-load_dotenv()
+# === ЖЕЛЕЗОБЕТОННОЕ ЧТЕНИЕ ПЕРЕМЕННЫХ НАПРЯМУЮ ИЗ BOTHOST ===
+# Никаких load_dotenv() и файлов .env, берем только из панели хостинга!
 
-# === КОНФИГУРАЦИЯ ===
-API_ID_RAW = os.getenv("API_ID")
-API_HASH = os.getenv("API_HASH")
-SESSION_STRING = os.getenv("SESSION_STRING")
-BOT_FEDERAL = os.getenv("BOT_FEDERAL")
+API_ID_RAW = os.environ.get("API_ID", "").strip()
+API_HASH = os.environ.get("API_HASH", "").strip()
+SESSION_STRING = os.environ.get("SESSION_STRING", "").strip()
+BOT_FEDERAL = os.environ.get("BOT_FEDERAL", "").strip()
+
+missing = []
+if not API_ID_RAW: missing.append("API_ID")
+if not API_HASH: missing.append("API_HASH")
+if not SESSION_STRING: missing.append("SESSION_STRING")
+if not BOT_FEDERAL: missing.append("BOT_FEDERAL")
+
+if missing:
+    raise RuntimeError(f"[-] ОШИБКА: BotHost не передал Питону переменные: {', '.join(missing)}")
+
+API_ID = int(API_ID_RAW)
 
 TARGET_CHANNEL = "@Dozor_Ru_RF"
 SOURCE_CHANNEL = "vrv_radar"
 
-if not all([API_ID_RAW, API_HASH, SESSION_STRING, BOT_FEDERAL]):
-    raise RuntimeError("[-] ОШИБКА: Проверь .env! Нужны API_ID, API_HASH, SESSION_STRING и BOT_FEDERAL.")
-
-API_ID = int(API_ID_RAW)
 app = Client("federal_aggregator", session_string=SESSION_STRING, api_id=API_ID, api_hash=API_HASH)
+
+# ... дальше идет остальной код (FOOTER_SIGNATURE, STOP_WORDS, функции и т.д.) ...
 
 FOOTER_SIGNATURE = (
     "\n\n📡 <b>Дозор.ру | Радар по всей России</b> — "
