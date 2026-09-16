@@ -7,6 +7,10 @@ import threading
 from datetime import datetime, timezone
 from html import escape
 from pyrogram import Client, idle
+from dotenv import load_dotenv
+import os
+
+load_dotenv() # Читаем наш новый файлик .env
 
 # === ЖЕЛЕЗОБЕТОННОЕ ЧТЕНИЕ ПЕРЕМЕННЫХ ИЗ BOTHOST ===
 # Никаких load_dotenv, берем строго из системы хостинга!
