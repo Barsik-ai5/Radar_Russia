@@ -1,16 +1,26 @@
 import os
 import re
 import requests
+from dotenv import load_dotenv
 from pyrogram import Client, idle
 
-# === 1. ПЕРЕМЕННЫЕ НАПРЯМУЮ ИЗ ПАНЕЛИ BOTHOST ===
-API_ID_RAW = os.environ.get("API_ID", "").strip()
-API_HASH = os.environ.get("API_HASH", "").strip()
-SESSION_STRING = os.environ.get("SESSION_STRING", "").strip()
-BOT_FEDERAL = os.environ.get("BOT_FEDERAL", "").strip()
+# === ЧИТАЕМ ПЕРЕМЕННЫЕ ИЗ .ENV (ПАНЕЛИ BOTHOST) ===
+load_dotenv()
 
-if not all([API_ID_RAW, API_HASH, SESSION_STRING, BOT_FEDERAL]):
-    raise RuntimeError("[-] ОШИБКА: BotHost не передал какую-то из переменных (API_ID, API_HASH, SESSION_STRING, BOT_FEDERAL)!")
+API_ID_RAW = os.getenv("API_ID") or os.getenv("TG_API_ID")
+API_HASH = os.getenv("API_HASH") or os.getenv("TG_API_HASH")
+SESSION_STRING = os.getenv("SESSION_STRING") or os.getenv("STRING_SESSION")
+BOT_TOKEN = os.getenv("BOT_FEDERAL") or os.getenv("BOT_TOKEN") or os.getenv("TOKEN")
+
+missing = []
+if not API_ID_RAW: missing.append("API_ID")
+if not API_HASH: missing.append("API_HASH")
+if not SESSION_STRING: missing.append("SESSION_STRING")
+if not BOT_TOKEN: missing.append("BOT_FEDERAL (или BOT_TOKEN)")
+
+if missing:
+    print(f"[!] Переменные, которые сейчас видит Питон: {list(os.environ.keys())}")
+    raise RuntimeError(f"[-] ОШИБКА: В панели не найдены: {', '.join(missing)}")
 
 API_ID = int(API_ID_RAW)
 
@@ -47,9 +57,7 @@ def is_filtered_out(text: str) -> bool:
     return False
 
 def send_to_channel(caption: str, photo_file=None):
-    base_url = f"https://api.telegram.org/bot{BOT_FEDERAL}"
-    
-    # Лимит Telegram: подпись к фото до 1024 символов, текст до 4096
+    base_url = f"https://api.telegram.org/bot{BOT_TOKEN}"
     max_len = 1024 - len(FOOTER_SIGNATURE) if photo_file else 4096 - len(FOOTER_SIGNATURE)
     final_text = (caption[:max_len] if caption else "") + FOOTER_SIGNATURE
 
@@ -99,7 +107,6 @@ async def handler(client, message):
     photo_bytes = None
     if message.photo:
         try:
-            # Скачиваем фото прямо в оперативку, чтобы бот мог его переслать
             f_io = await message.download(in_memory=True)
             photo_bytes = f_io.getvalue()
         except Exception as e:
