@@ -19,6 +19,7 @@ from federal_filter import INVISIBLE, clean_post, format_post
 
 LOG = logging.getLogger("federal-dozor")
 STATE_FILE = Path(__file__).with_name("federal_state.json")
+BOTHOST_DATA_DIR = Path("/app/data")
 STATE_TTL = 48 * 60 * 60
 MAX_POST_AGE = 60 * 60
 MAX_TEXT = 3800
@@ -109,9 +110,11 @@ class State:
         self.albums: dict[str, float] = {}
         self.dirty = False
 
-    def load(self) -> None:
+    def load(self, legacy_path: Path | None = None) -> None:
+        migrate = legacy_path is not None and not self.path.exists() and legacy_path.is_file()
+        path = legacy_path if migrate else self.path
         try:
-            with self.path.open(encoding="utf-8") as stream:
+            with path.open(encoding="utf-8") as stream:
                 state = json.load(stream)
         except FileNotFoundError:
             return
@@ -124,6 +127,8 @@ class State:
             }
             self.albums = {key: float(value) for key, value in state["albums"].items()}
         self.prune()
+        if migrate:
+            self.save()
 
     def prune(self) -> None:
         cutoff = time.time() - STATE_TTL
@@ -383,8 +388,12 @@ async def run_bot(config: Config) -> None:
                     break
         chat = await app.get_chat(peer)
         source_id = chat.id
-        state = State(STATE_FILE, source_id, config.channel_id)
-        state.load()
+        if BOTHOST_DATA_DIR.is_dir():
+            state = State(BOTHOST_DATA_DIR / STATE_FILE.name, source_id, config.channel_id)
+            state.load(legacy_path=STATE_FILE)
+        else:
+            state = State(STATE_FILE, source_id, config.channel_id)
+            state.load()
         bot = FederalBot(config, api, state)
         ready.set()
         tasks.append(asyncio.create_task(bot.heartbeat()))

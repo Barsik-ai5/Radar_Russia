@@ -196,6 +196,20 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
         await self.bot.process(self.mtproto, post(1, date=old_date, text="Тревога"))
         self.http.assert_not_called()
 
+    def test_state_moves_to_data_volume_without_overwriting_existing_history(self):
+        self.bot.state.record([10], None, 100)
+        self.bot.state.save()
+        volume = self.path.parent / "data"
+        volume.mkdir()
+        persisted = main.State(volume / self.path.name, -10042, self.config.channel_id)
+        persisted.load(legacy_path=self.path)
+        self.assertEqual(persisted.reply_to(10)["message_id"], 100)
+        self.assertTrue(persisted.path.is_file())
+        self.bot.state.record([10], None, 200)
+        self.bot.state.save()
+        persisted.load(legacy_path=self.path)
+        self.assertEqual(persisted.reply_to(10)["message_id"], 100)
+
     async def test_album_uses_earliest_captioned_member_and_maps_other_frames(self):
         empty = post(1, photo=object(), media_group_id="group")
         photo = post(2, photo=object(), caption="ПВО работает", media_group_id="group")
@@ -281,7 +295,11 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
             client.get_chat.assert_awaited_once_with("vrv_radar")
             await asyncio.wait_for(startup_sent.wait(), 2)
 
-        with patch.object(main, "STATE_FILE", self.path), patch.object(pyrogram, "Client", return_value=client) as factory:
+        with (
+            patch.object(main, "STATE_FILE", self.path),
+            patch.object(main, "BOTHOST_DATA_DIR", self.path.parent / "data"),
+            patch.object(pyrogram, "Client", return_value=client) as factory,
+        ):
             with patch.object(pyrogram, "idle", side_effect=idle), patch.object(main.BotAPI, "send", send_startup):
                 await main.run_bot(self.config)
         self.assertTrue(factory.call_args.kwargs["in_memory"])
