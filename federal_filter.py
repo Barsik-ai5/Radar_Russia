@@ -14,7 +14,7 @@ URL = re.compile(
     re.I,
 )
 MENTION = re.compile(r"(?<!\w)@[a-z0-9_]+", re.I | re.ASCII)
-DECORATION = " \t\n👉👇🔗➡➜➤🔹▪️•🔴🟡🟢⚪❗⚡🚨📢|-/\\:;,.!?!()[]{}«»*#_"
+DECORATION = " \t\n👉👇🔗➡➜➤🔹▪️•🔴🟡🟢⚪❗⚡🚨📢🗺📍📌|-/\\:;,.!?!()[]{}«»*#_"
 SOCIAL = r"(?:макс|мах|max|вк|vk|дзен|dzen|rutube|рутуб)\b"
 SIGNATURE = re.compile(
     r"^(?:подпис(?:аться|ывайтесь|ывайся)|подпиш(?:ись|итесь))\b"
@@ -64,6 +64,12 @@ IMMEDIATE = re.compile(
 )
 WARNING = re.compile(r"\b(?:опасность|внимание)\s+(?:по\s+)?(?:бпла|беспилот\w*)\b")
 NEWS_PREFIX = re.compile(r"^(?:постфактум|сводка|инфо)\s*:\s*", re.I)
+THREAT_MAP = re.compile(
+    r"^(?:(?:актуальн\w*|обновл[её]нн\w*|интерактивн\w*)\s+)?карта\s+"
+    r"(?:(?:всех|активн\w*|текущ\w*|действующ\w*)\s+)*(?:угроз|опасност)\w*\b",
+    re.I,
+)
+SAFETY_MEASURES = re.compile(r"\bмер(?:ы|ам|ами|ах)?\s+безопасности\b", re.I)
 
 
 def normalize(text: str) -> str:
@@ -114,6 +120,9 @@ def is_source_link(url: str, source: str) -> bool:
 
 def clean_post(raw: str, entities=(), source: str = "vrv_radar") -> str:
     if not raw:
+        return ""
+    headline = " ".join(normalize(raw).split()).lstrip(DECORATION)
+    if THREAT_MAP.match(NEWS_PREFIX.sub("", headline).lstrip(DECORATION)):
         return ""
     links = entity_links(raw, entities)
     lines = []
@@ -169,6 +178,8 @@ def classify_status(text: str) -> str:
     all_clear = [clause for clause in re.split(r"[.!?;\n]+", folded) if ALL_CLEAR.search(clause)]
     if any(not NEGATED_CLEAR.search(clause) for clause in all_clear):
         return "🟢"
+    if SAFETY_MEASURES.search(folded):
+        return "🔴"
     warning = WARNING.search(folded)
     report = HISTORICAL.search(folded) or (REPORT_LABEL.search(folded) and not warning)
     if report and not IMMEDIATE.search(folded):
@@ -189,7 +200,8 @@ def format_post(text: str, title: str, url: str, limit: int) -> str:
     status = next((char for char in markers[0] if char in CIRCLES), None) if markers else None
     body = text[markers.end():] if markers else text
     body = re.sub(r"[🔴🟡🟢⚪]\uFE0F?|\*\*|__|(?m:^[ \t]*#+[ \t]*)", "", body).strip()
-    status = status or classify_status(body)
+    if status is None or SAFETY_MEASURES.search(body):
+        status = classify_status(body)
     body = NEWS_PREFIX.sub("", body).strip()
     if not body:
         return ""

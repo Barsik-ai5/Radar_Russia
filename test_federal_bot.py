@@ -156,11 +156,39 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_rejects_hidden_caption_ad_without_download_or_send(self):
         caption = "🚨 Сбили дрон. Подробнее\nИнформация уточняется."
-        message = post(1, photo=object(), caption=caption,
+        message = post(1, video=object(), caption=caption,
                        caption_entities=[link(caption, "Подробнее", "https://other.example/promo")])
         await self.bot.process(self.mtproto, message)
         self.mtproto.download_media.assert_not_called()
         self.http.assert_not_called()
+
+    async def test_rejects_photo_and_threat_map_even_without_photo(self):
+        caption = "Карта активных опасностей от радара ВРВ\n\nФиксации БПЛА за последние 20 минут"
+        messages = (
+            post(1, photo=object(), caption=caption),
+            post(2, photo=object(), caption="Объявлена опасность по БПЛА."),
+            post(3, text=caption),
+            post(4, text="🗺️ Обновлённая карта\nтекущих угроз"),
+            post(5, video=object(), caption="🔴 Карта активных угроз"),
+        )
+        for message in messages:
+            await self.bot.process(self.mtproto, message)
+        self.mtproto.download_media.assert_not_called()
+        self.http.assert_not_called()
+        self.assertEqual(self.bot.filtered, len(messages))
+
+    async def test_safety_measures_override_source_marker_unless_all_clear(self):
+        samples = (
+            ("🟡 Опасность по БПЛА. Соблюдайте меры безопасности.", "🔴"),
+            ("⚪ Меры безопасности", "🔴"),
+            ("Соблюдайте меры безопасности, отбой пока не объявлен.", "🔴"),
+            ("Отбой опасности. Продолжайте соблюдать меры безопасности.", "🟢"),
+        )
+        for source_id, (body, expected) in enumerate(samples, start=1):
+            with self.subTest(body=body):
+                await self.bot.process(self.mtproto, post(source_id, text=body))
+                self.assertTrue(self.http.call_args.kwargs["json"]["text"].startswith(expected + " "))
+        self.assertEqual(self.http.call_count, len(samples))
 
     async def test_real_alert_with_max_tail_is_sent_with_our_footer(self):
         message = post(1, text="🚨 Опасность по БПЛА.\n\nНаш канал в MAX\n@vrv_radar\n👇")
@@ -210,21 +238,35 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
         persisted.load(legacy_path=self.path)
         self.assertEqual(persisted.reply_to(10)["message_id"], 100)
 
-    async def test_album_uses_earliest_captioned_member_and_maps_other_frames(self):
-        empty = post(1, photo=object(), media_group_id="group")
-        photo = post(2, photo=object(), caption="ПВО работает", media_group_id="group")
-        other = post(3, video=object(), caption="Другой кадр", media_group_id="group")
-        self.mtproto.get_media_group.return_value = [other, empty, photo]
-        media = io.BytesIO(b"fake-photo")
-        self.mtproto.download_media.return_value = media
-        for message in (other, empty, photo):
-            await self.bot.process(self.mtproto, message)
-        await self.new_bot().process(self.mtproto, photo)
+    async def test_album_with_photo_is_ignored_in_either_arrival_order(self):
+        for group, order in enumerate((("photo", "video"), ("video", "photo")), start=1):
+            photo = post(group * 10, photo=object(), media_group_id=str(group))
+            video = post(group * 10 + 1, video=object(), caption="Объявлена опасность по БПЛА",
+                         media_group_id=str(group))
+            self.mtproto.get_media_group.return_value = [video, photo]
+            members = {"photo": photo, "video": video}
+            for kind in order:
+                await self.bot.process(self.mtproto, members[kind])
         self.mtproto.get_media_group.assert_awaited_once()
-        self.mtproto.download_media.assert_awaited_once_with(photo, in_memory=True)
+        self.mtproto.download_media.assert_not_called()
+        self.http.assert_not_called()
+        self.assertEqual(self.bot.filtered, 2)
+
+    async def test_video_album_uses_earliest_captioned_member_and_maps_other_frames(self):
+        empty = post(1, video=object(), media_group_id="group")
+        first_caption = post(2, video=object(), caption="ПВО работает", media_group_id="group")
+        other = post(3, video=object(), caption="Другой кадр", media_group_id="group")
+        self.mtproto.get_media_group.return_value = [other, empty, first_caption]
+        media = io.BytesIO(b"fake-video")
+        self.mtproto.download_media.return_value = media
+        for message in (other, empty, first_caption):
+            await self.bot.process(self.mtproto, message)
+        await self.new_bot().process(self.mtproto, first_caption)
+        self.mtproto.get_media_group.assert_awaited_once()
+        self.mtproto.download_media.assert_awaited_once_with(first_caption, in_memory=True)
         self.http.assert_called_once()
-        self.assertTrue(self.http.call_args.args[0].endswith("/sendPhoto"))
-        self.assertIn("photo", self.http.call_args.kwargs["files"])
+        self.assertTrue(self.http.call_args.args[0].endswith("/sendVideo"))
+        self.assertIn("video", self.http.call_args.kwargs["files"])
         self.assertTrue(media.closed)
         self.assertEqual(self.new_bot().state.reply_to(1)["message_id"], 77)
 

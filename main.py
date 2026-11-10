@@ -24,7 +24,7 @@ STATE_TTL = 48 * 60 * 60
 MAX_POST_AGE = 60 * 60
 MAX_TEXT = 3800
 MAX_CAPTION = 900
-MEDIA_LIMITS = {"photo": 10_000_000, "video": 50_000_000}
+MAX_VIDEO_SIZE = 50_000_000
 
 
 class ConfigError(ValueError):
@@ -190,26 +190,25 @@ class BotAPI:
         self.url = f"https://api.telegram.org/bot{token}"
 
     async def send(self, chat_id: str | int, text: str, *, reply: dict | None = None,
-                   media: str | None = None, attachment=None, html: bool = True) -> int:
+                   video=None, html: bool = True) -> int:
         payload = {"chat_id": chat_id}
         if html:
             payload["parse_mode"] = "HTML"
         if reply:
             payload["reply_parameters"] = reply
         method = "sendMessage"
-        if media:
+        if video is not None:
             payload["caption"] = text
             if reply:
                 payload["reply_parameters"] = json.dumps(reply)
-            method = "sendPhoto" if media == "photo" else "sendVideo"
+            method = "sendVideo"
         else:
             payload.update(text=text, disable_web_page_preview=True)
 
         for attempt in range(3):
-            if media:
-                attachment.seek(0)
-                name = "photo.jpg" if media == "photo" else "video.mp4"
-                kwargs = {"data": payload, "files": {media: (name, attachment)}}
+            if video is not None:
+                video.seek(0)
+                kwargs = {"data": payload, "files": {"video": ("video.mp4", video)}}
             else:
                 kwargs = {"json": payload}
             try:
@@ -306,21 +305,28 @@ class FederalBot:
         if message.id in self.state.messages or group in self.state.albums:
             return
         source_ids = [message.id]
-        if group:
+        members = [message]
+        if group and not message.photo:
             members = await client.get_media_group(message.chat.id, message.id)
-            eligible = [item for item in members if item.caption and (item.photo or item.video)]
+            source_ids = list({message.id, *(item.id for item in members)})
+
+        if any(item.photo for item in members):
+            self.filtered += 1
+            self.state.record(source_ids, group)
+            return
+
+        if group:
+            eligible = [item for item in members if item.caption and item.video]
             if not eligible:
                 self.state.record(source_ids, group)
                 return
-            source_ids = list({message.id, *(item.id for item in members)})
             message = min(eligible, key=lambda item: item.id)
 
-        media = "photo" if message.photo else "video" if message.video else None
-        raw = message.caption if media else message.text
-        entities = message.caption_entities if media else message.entities
+        raw = message.caption if message.video else message.text
+        entities = message.caption_entities if message.video else message.entities
         body = clean_post(raw, entities, self.config.source_channel)
         rendered = format_post(body, self.config.channel_title, self.config.channel_url,
-                               MAX_CAPTION if media else MAX_TEXT) if body else ""
+                               MAX_CAPTION if message.video else MAX_TEXT) if body else ""
         if not rendered:
             self.filtered += 1
             self.state.record(source_ids, group)
@@ -329,9 +335,9 @@ class FederalBot:
         reply = self.state.reply_to(message.reply_to_message_id)
         attachment = None
         try:
-            if media:
-                size = getattr(getattr(message, media), "file_size", None)
-                if size and size > MEDIA_LIMITS[media]:
+            if message.video:
+                size = getattr(message.video, "file_size", None)
+                if size and size > MAX_VIDEO_SIZE:
                     raise DeliveryError("размер медиа превышает лимит Telegram Bot API")
                 attachment = await client.download_media(message, in_memory=True)
                 if attachment is None:
@@ -339,7 +345,7 @@ class FederalBot:
             # Persist before sending. If the outcome is unknown, a replay must not post twice.
             self.state.reserve(source_ids, group)
             target_id = await self.api.send(self.config.channel_id, rendered, reply=reply,
-                                            media=media, attachment=attachment)
+                                            video=attachment)
             self.state.record(source_ids, group, target_id)
             self.state.save()
             self.published += 1
