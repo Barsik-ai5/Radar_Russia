@@ -6,6 +6,8 @@ import html
 import re
 from urllib.parse import urlsplit
 
+from source_map import is_map_announcement, mask_map_promotion
+
 INVISIBLE = dict.fromkeys(map(ord, "\u200b\ufeff"))
 DASHES = str.maketrans({char: "-" for char in "‐‑‒–—―−"})
 KNOWN_SOURCES = {"vrv_radar", "vrv_support", "locatorru"}
@@ -64,11 +66,6 @@ IMMEDIATE = re.compile(
 )
 WARNING = re.compile(r"\b(?:опасность|внимание)\s+(?:по\s+)?(?:бпла|беспилот\w*)\b")
 NEWS_PREFIX = re.compile(r"^(?:постфактум|сводка|инфо)\s*:\s*", re.I)
-THREAT_MAP = re.compile(
-    r"^(?:(?:актуальн\w*|обновл[её]нн\w*|интерактивн\w*)\s+)?карта\s+"
-    r"(?:(?:всех|активн\w*|текущ\w*|действующ\w*)\s+)*(?:угроз|опасност)\w*\b",
-    re.I,
-)
 SAFETY_MEASURES = re.compile(r"\bмер(?:ы|ам|ами|ах)?\s+безопасности\b", re.I)
 
 
@@ -119,12 +116,12 @@ def is_source_link(url: str, source: str) -> bool:
 
 
 def clean_post(raw: str, entities=(), source: str = "vrv_radar") -> str:
-    if not raw:
+    if not raw or is_map_announcement(raw):
         return ""
-    headline = " ".join(normalize(raw).split()).lstrip(DECORATION)
-    if THREAT_MAP.match(NEWS_PREFIX.sub("", headline).lstrip(DECORATION)):
-        return ""
+    # Resolve Telegram offsets before masking the footer, then keep links in the remaining text.
     links = entity_links(raw, entities)
+    raw = mask_map_promotion(raw, links)
+    links = [(start, end, url) for start, end, url in links if raw[start:end].strip()]
     lines = []
     offset = 0
     for line in raw.splitlines(keepends=True):

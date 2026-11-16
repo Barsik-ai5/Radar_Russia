@@ -177,6 +177,25 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
         self.http.assert_not_called()
         self.assertEqual(self.bot.filtered, len(messages))
 
+    async def test_map_footer_is_removed_without_dropping_the_message(self):
+        body = "🟡 Информационное сообщение."
+        examples = (
+            (body + " Карта опасностей – radar-vrv.ru", "radar-vrv.ru", None),
+            (body + "\r\n🗺️ Карта активных угроз:\r\nhttps://www.radar-vrv.ru/map", None, None),
+            (body + " | Карта опасностей", "Карта опасностей", "https://radar-vrv.ru/"),
+            (body + " | Открыть карту", "Открыть карту", "https://radar-vrv.ru/"),
+            (body + " Карта опасностей – ra\u200bdar-vrv.ru", None, None),
+        )
+        for source_id, (raw, label, url) in enumerate(examples, start=1):
+            with self.subTest(raw=raw):
+                entities = [link(raw, label, url)] if label else None
+                await self.bot.process(self.mtproto, post(source_id, text=raw, entities=entities))
+                self.assertEqual(self.http.call_count, source_id)
+                text = self.http.call_args.kwargs["json"]["text"]
+                self.assertEqual(text.split("\n\n")[0], body)
+        raw = body + " Подробнее. Карта опасностей — radar-vrv.ru"
+        self.assertEqual(clean_post(raw, [link(raw, "Подробнее", "https://unrelated.example/")]), "")
+
     async def test_safety_measures_override_source_marker_unless_all_clear(self):
         samples = (
             ("🟡 Опасность по БПЛА. Соблюдайте меры безопасности.", "🔴"),
